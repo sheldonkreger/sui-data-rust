@@ -3,6 +3,7 @@ use serde::Serialize;
 use sui_sdk::rpc_types::{SuiEventFilter, SuiEventEnvelope};
 use sui_sdk::SuiClient;
 use std::env;
+use anyhow::Result;
 
 use pulsar::{
     authentication::oauth2::OAuth2Authentication, message::proto, producer, Authentication,
@@ -11,7 +12,7 @@ use pulsar::{
 
 #[derive(Serialize)]
 struct EventJson {
-    event: String,
+    data: String,
 }
 
 impl SerializeMessage for EventJson {
@@ -26,13 +27,17 @@ impl SerializeMessage for EventJson {
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    env_logger::init();
     let sui = SuiClient::new("http://10.0.0.128:9000", Some("ws://10.0.0.128:9000"), None).await?;
     let mut subscribe_all = sui.event_api().subscribe_event(SuiEventFilter::All(vec![])).await?;
     loop {
         let stream_return = subscribe_all.next().await;
         match stream_return {
             Some(sr) => match sr {
-                Ok(item) => to_json(item),
+                Ok(item) => {
+                    println!("inside some item match");
+                    let _json1 = to_json(item).await;
+                },
                 Err(_e) => println!("no item"),
             },
             None => println!("error: none"),
@@ -42,17 +47,19 @@ async fn main() -> Result<(), anyhow::Error> {
 
 }
 
-fn to_json(item: SuiEventEnvelope) {
+async fn to_json(item: SuiEventEnvelope) {
+    println!("inside to_json");
     let json_string = serde_json::to_string(&item);
     match json_string {
         Ok(s) => {
-            let pulsar_return = publish_to_pulsar(s.);
-            match pulsar_return {
-                Some(pr) => match pr {
-                    Ok(r) => println!("ok"),
-                    Err(_e) => println!("unable to publish"),
-                }
-            }
+            println!("inside string match");
+            let _pulsar_return = publish_to_pulsar(s).await;
+            // match pulsar_return {
+            //     Some(pr) => match pr {
+            //         Ok(r) => println!("ok"),
+            //         Err(_e) => println!("unable to publish"),
+            //     }
+            // }
         },
         Err(_e) => println!("cannot serialize to json"),
     }
@@ -60,7 +67,8 @@ fn to_json(item: SuiEventEnvelope) {
 }
 
 async fn publish_to_pulsar(json_item: String) -> Result<(), pulsar::Error> {
-    env_logger::init();
+    println!("inside publish_to_pulsar");
+    println!("{}", json_item);
 
     let addr = env::var("PULSAR_ADDRESS")
         .ok()
@@ -99,24 +107,13 @@ async fn publish_to_pulsar(json_item: String) -> Result<(), pulsar::Error> {
         })
         .build()
         .await?;
-    let mut counter = 0usize;
-    loop {
-        producer
-            .send(EventJson {
-                event: json_item.to_string(),
-            })
-            .await?
-            .await
-            .unwrap();
+    producer
+        .send(EventJson {
+        data: json_item,
+        })
+        .await?
+        .await
+        .unwrap();
 
-        counter += 1;
-        println!("{counter} messages");
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-        if counter > 10 {
-            // producer.close().await.expect("Unable to close connection");
-            break;
-        }
-    }
     Ok(())
 }
